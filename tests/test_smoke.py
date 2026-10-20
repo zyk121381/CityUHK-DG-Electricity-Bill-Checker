@@ -256,11 +256,120 @@ def test_helpers() -> None:
     print("  [ok] 路径取值与数字解析")
 
 
+def test_daily_average_uses_real_gap() -> None:
+    """日均要按真实时间折算，不能按日历天数。
+
+    回归：定时任务每 6 小时跑一次时，相邻两天「最后一条读数」可能只隔几小时，
+    按日历算会把日均压到 1/5。
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from cityu_power.analyzer import _series
+    from cityu_power.models import Reading
+
+    tz = timezone(timedelta(hours=8))
+    t0 = datetime(2026, 10, 20, 19, 23, tzinfo=tz)
+
+    a = Reading(ts=t0, balance_kwh=197.72)
+    b = Reading(ts=t0 + timedelta(hours=4, minutes=42), balance_kwh=196.75)
+    got = _series([a, b])
+    assert got and abs(got[0].used_kwh - 4.95) < 0.05, got
+
+    c = Reading(ts=t0 + timedelta(days=1), balance_kwh=192.8)
+    got = _series([a, c])
+    assert got and abs(got[0].used_kwh - 4.92) < 0.01, got
+
+    # 漏抓三天，按实际天数摊平
+    d = Reading(ts=t0 + timedelta(days=3), balance_kwh=180.0)
+    got = _series([a, d])
+    assert got and abs(got[0].used_kwh - 5.91) < 0.05, got
+
+    # 间隔不到一小时，差值是噪声，跳过
+    e = Reading(ts=t0 + timedelta(minutes=10), balance_kwh=197.70)
+    assert _series([a, e]) == []
+
+    print("  [ok] 日均按真实时间折算")
+
+
+def test_short_window_falls_back_to_history() -> None:
+    """本地窗口不满一天就退回服务端均值。
+
+    回归：出门开关空调会让几个小时的样本完全不代表一天日均。
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from cityu_power.analyzer import analyze
+    from cityu_power.models import Reading
+
+    tz = timezone(timedelta(hours=8))
+    t0 = datetime(2026, 10, 20, 19, 23, tzinfo=tz)
+
+    short = [
+        Reading(ts=t0, balance_kwh=197.72),
+        Reading(ts=t0 + timedelta(hours=4, minutes=42), balance_kwh=196.75),
+    ]
+    got = analyze(
+        latest=short[-1],
+        readings=short,
+        fallback_avg=4.77,
+        min_local_days=1.0,
+        now=short[-1].ts + timedelta(minutes=1),
+    )
+    assert got.avg_source == "history", got.avg_source
+    assert got.avg_daily == 4.77, got.avg_daily
+
+    full = [Reading(ts=t0, balance_kwh=197.72)]
+    for i in range(1, 5):
+        full.append(
+            Reading(ts=t0 + timedelta(hours=6 * i), balance_kwh=197.72 - 1.46 * i)
+        )
+    got = analyze(
+        latest=full[-1],
+        readings=full,
+        fallback_avg=4.77,
+        min_local_days=1.0,
+        now=full[-1].ts + timedelta(minutes=1),
+    )
+    assert got.avg_source == "local", got.avg_source
+    assert got.avg_daily and got.avg_daily > 5, got.avg_daily
+    # 本地口径也要标出真实区间，和服务端那份一样
+    assert got.avg_window is not None, got.avg_window
+
+    # 攒了三天：区间要如实显示三天
+    days = [Reading(ts=t0 + timedelta(days=d), balance_kwh=197.72 - 4.4 * d)
+            for d in range(4)]
+    got = analyze(
+        latest=days[-1],
+        readings=days,
+        fallback_avg=4.77,
+        min_local_days=1.0,
+        now=days[-1].ts + timedelta(hours=6),
+    )
+    assert got.avg_source == "local", got.avg_source
+    assert got.avg_window == ("10-21", "10-23"), got.avg_window
+
+    # 门槛提高到 3 天：两天的数据还不够，仍走服务端
+    two_days = [Reading(ts=t0 + timedelta(days=d), balance_kwh=197.72 - 4.4 * d)
+                for d in range(3)]
+    strict = analyze(
+        latest=two_days[-1],
+        readings=two_days,
+        fallback_avg=4.77,
+        min_local_days=3.0,
+        now=two_days[-1].ts + timedelta(hours=6),
+    )
+    assert strict.avg_source == "history", strict.avg_source
+
+    print("  [ok] 不足一天退回服务端均值")
+
+
 def main() -> int:
     server, base = serve()
     try:
         print("本地假服务器:", base)
         test_helpers()
+        test_daily_average_uses_real_gap()
+        test_short_window_falls_back_to_history()
         test_bill_list()
         test_http_provider(base)
         test_regex_extract(base)

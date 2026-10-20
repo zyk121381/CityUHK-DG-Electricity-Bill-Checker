@@ -157,7 +157,8 @@ electricity:
 
 storage:
   db_path: "data/readings.db"
-  analysis_window_days: 7
+  analysis_window_days: 7   # 日均用电取最近几天的数据来平均
+  min_local_days: 3          # 本地读数至少覆盖几天才拿来算日均，不够就用服务端均值
 
 app:
   timezone: "Asia/Shanghai"

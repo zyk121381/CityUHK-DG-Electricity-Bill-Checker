@@ -43,6 +43,7 @@ class Analysis:
             return round(self.latest.balance_kwh * self.price_per_kwh, 2)
         return None
 
+
 def _parse_usage(items: Any, *, day_labels: bool = False) -> list[tuple[str, float]]:
     """
     把 [{date, usage}] 解析成按时间升序的 [(label, kWh)]。
@@ -88,13 +89,18 @@ def avg_from_history(items: Any, days: int = 14) -> float | None:
 
 def _series(readings: list[Reading]) -> list[DailyUsage]:
     """
-    把每日最后一条读数转成逐日用电量。
-    漏抓导致某段区间跨了多天时，按实际天数摊平，避免把 3 天的用量算成 1 天。
+    把相邻读数换算成日均用电。
+
+    用真实时间间隔，不是日历天数。`daily_latest` 取的是每天最后一条读数，
+    定时任务不一定对齐整点——手动补跑一次，两条读数可能只隔几个小时，
+    按日历算会把日均压得很低。
     """
     usable = [r for r in readings if r.balance_kwh is not None]
     out: list[DailyUsage] = []
     for prev, cur in zip(usable, usable[1:]):
-        span = max((cur.ts.date() - prev.ts.date()).days, 1)
+        span = (cur.ts - prev.ts).total_seconds() / 86400
+        if span < 1 / 24:  # 不到一小时，差值多半是噪声
+            continue
         total = prev.balance_kwh - cur.balance_kwh
         if total <= 0 or total / span > 200:
             continue
@@ -103,7 +109,7 @@ def _series(readings: list[Reading]) -> list[DailyUsage]:
                 day=cur.ts.date(),
                 used_kwh=round(total / span, 2),
                 balance_kwh=cur.balance_kwh,
-                span_days=span,
+                span_days=round(span, 4),
             )
         )
     return out
@@ -155,6 +161,9 @@ def analyze(
     previous: Reading | None = None,
     price_per_kwh: float | None = None,
     price_source: str = "config",
+    # 本地读数至少要覆盖这么多天，才拿来算日均用电。真正的出处是配置项
+    # storage.min_local_days，这里只是调用方不传时的默认值，和模板保持一致。
+    min_local_days: float = 3.0,
     now: datetime | None = None,
 ) -> Analysis:
     now = now or datetime.now().astimezone()
@@ -179,8 +188,15 @@ def analyze(
         result.last_used = result.series[-1].used_kwh
         total_used = sum(d.used_kwh * d.span_days for d in result.series)
         total_span = sum(d.span_days for d in result.series)
-        if total_span:
+        # 本地窗口不满一天，就不拿它算日均。
+        # 出门开不开空调、家里电器在不在线，几个小时的用量完全不代表一整天；
+        # 这种时候宁可退回服务端那份多天日均，等本地攒够一整天的样本再说。
+        if total_span >= min_local_days:
             result.avg_daily = round(total_used / total_span, 2)
+            result.avg_window = (
+                result.series[0].day.strftime("%m-%d"),
+                result.series[-1].day.strftime("%m-%d"),
+            )
 
     extra = (latest.meta or {}).get("extra") or {}
     if result.avg_daily is None and fallback_avg:

@@ -1,5 +1,5 @@
-"""灌入 N 天演示数据，用来看报告长什么样（不联网、不推送）。
-
+"""
+灌入 N 天演示数据，用来看报告长什么样（不联网、不推送）。
     python scripts/seed_demo.py -d 10
     python run.py report --html
     python run.py purge --keep-days 0   # 清干净

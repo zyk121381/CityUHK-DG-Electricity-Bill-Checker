@@ -37,7 +37,7 @@ The tool uses the IdP's own OAuth2 password grant instead, and trades the sessio
 ### 📈 Trends
 
 - Daily and monthly series. The Markdown report squeezes them into a one-line sparkline; the terminal and HTML reports draw labelled bars;
-- Source: local readings once three days have accumulated, otherwise the server history. The report names the source and prints the real range;
+- Source: local readings have to cover `min_local_days` days before they are used — the gap is measured in real time, not in calendar days — and until then the average comes from the server's last 14 days. The average itself spans the last `analysis_window_days` days. The report names the source and prints the real range;
 - The range is the real one.
 
 ### 🔔 Notifications
@@ -153,6 +153,10 @@ notify:
     low_days_left: 5          # alert when fewer days are left than this
     spike_ratio: 2.0          # a day is unusual above this multiple of the recent average
     silent_days: 2            # alert after this many days without a new reading
+
+storage:
+  analysis_window_days: 7   # average the daily usage over this many days
+  min_local_days: 3          # local readings must cover this many days to be used
 
 app:
   locale: en              # en (default) or zh

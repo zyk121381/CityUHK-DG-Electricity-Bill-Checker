@@ -126,9 +126,10 @@ def subject(a: Analysis, kind: str | None = None) -> str:
 
 def _avg_tag(a: Analysis) -> str:
     """日均的口径说明。"""
+    if a.avg_window:
+        key = "average_of" if a.avg_source == "history" else "average_of_local"
+        return _wrap(str(t(key, start=a.avg_window[0], end=a.avg_window[1])))
     if a.avg_source == "history":
-        if a.avg_window:
-            return _wrap(str(t("average_of", start=a.avg_window[0], end=a.avg_window[1])))
         return _wrap(str(t("server_average")))
     return _wrap(str(t("local_readings")))
 

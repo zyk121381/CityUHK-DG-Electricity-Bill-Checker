@@ -110,6 +110,7 @@ def _analyze(cfg: Config, latest: Reading, storage: Storage) -> Analysis:
         latest=latest,
         readings=storage.daily_latest(int(cfg.get("storage.analysis_window_days", 7)) + 1),
         window_days=int(cfg.get("storage.analysis_window_days", 7)),
+        min_local_days=float(cfg.get("storage.min_local_days", 3)),
         alerts_enabled=bool(alerts.get("enabled", True)),
         low_balance_kwh=alerts.get("low_balance_kwh"),
         low_days_left=alerts.get("low_days_left"),

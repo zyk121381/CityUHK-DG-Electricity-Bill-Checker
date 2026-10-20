@@ -56,8 +56,8 @@ class Reading:
 
 @dataclass(slots=True)
 class DailyUsage:
-    """某一天的用电量统计。"""
+    """某一段用电量统计。"""
     day: date
     used_kwh: float      # 该区间的日均用电
     balance_kwh: float
-    span_days: int = 1   # 与上一条读数相隔几天（漏抓时 > 1）
+    span_days: float = 1.0  # 与上一条读数相隔几天（漏抓时 > 1，可以是小数）
