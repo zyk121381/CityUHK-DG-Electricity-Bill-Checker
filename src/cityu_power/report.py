@@ -124,6 +124,24 @@ def subject(a: Analysis, kind: str | None = None) -> str:
     )
 
 
+_WRAPPERS = "（）()"
+
+
+def _sub_lines(*parts: str) -> str:
+    """卡片下面的小字，一段一行，空的不占位置。"""
+    style = 'font-size:11px;color:#9ca3af;line-height:1.5'
+    return "".join(
+        f'<div class="sub" style="{style}">{x}</div>' for x in parts if x
+    )
+
+
+def _cny(v: float | None) -> str:
+    """折合金额的写法。金额很小时多留一位，免得显示成 ¥0.00。"""
+    if v is None:
+        return ""
+    return f"≈ ¥{abs(v):.3f}" if abs(v) < 0.01 else f"≈ ¥{abs(v):.2f}"
+
+
 def _avg_tag(a: Analysis) -> str:
     """日均的口径说明。"""
     if a.avg_window:
@@ -158,12 +176,16 @@ def _items(a: Analysis) -> list[tuple[str, str, str]]:
 
     if a.delta_kwh is not None:
         if a.delta_kwh > 0:
-            value = f"+{a.delta_kwh:.2f} kWh{_wrap(str(t('topped_up')))}"
+            num, note = f"+{a.delta_kwh:.2f}", str(t("topped_up"))
         elif a.delta_kwh < 0:
-            value = f"{a.delta_kwh:.2f} kWh{_wrap(str(t('consumed')))}"
+            num, note = f"{a.delta_kwh:.2f}", str(t("consumed"))
         else:
-            value = f"0.00 kWh{_wrap(str(t('no_change')))}"
-        rows.append(("change", str(t("change")), value))
+            num, note = "0.00", str(t("no_change"))
+        parts = [note, _cny(a.change_cny) if a.delta_kwh else ""]
+        rows.append(
+            ("change", str(t("change")),
+             f"{num} kWh{_wrap('，'.join(x for x in parts if x))}")
+        )
 
     if a.prev_ts is not None:
         rows.append(
@@ -180,7 +202,11 @@ def _items(a: Analysis) -> list[tuple[str, str, str]]:
         )
 
     if a.avg_daily is not None:
-        rows.append(("daily_avg", str(t("daily_avg")), f"{a.avg_daily:.2f} kWh{_avg_tag(a)}"))
+        parts = [_avg_tag(a).strip(_WRAPPERS), _cny(a.avg_cny)]
+        tail = _wrap("，".join(x for x in parts if x))
+        rows.append(
+            ("daily_avg", str(t("daily_avg")), f"{a.avg_daily:.2f} kWh{tail}")
+        )
 
     if a.days_left is not None:
         tail = (
@@ -393,6 +419,8 @@ def render_html(a: Analysis, trend_days: int = 7) -> str:
     runout = (
         str(t("until", date=f"{a.runout_date:%m-%d}")) if a.runout_date else ""
     )
+    # 窄屏下一格只有一百多像素宽，区间和金额挤在一行会换行难看，分成两行
+    avg_subs = _sub_lines(_avg_tag(a).strip(_WRAPPERS), _cny(a.avg_cny))
 
     if a.delta_kwh is None:
         change_num, change_note, change_color = "—", "", "#111827"
@@ -402,6 +430,8 @@ def render_html(a: Analysis, trend_days: int = 7) -> str:
         change_num, change_note, change_color = f"{a.delta_kwh:.2f}", str(t("consumed")), "#ef4444"
     else:
         change_num, change_note, change_color = "0.00", str(t("no_change")), "#111827"
+
+    change_subs = _sub_lines(change_note, _cny(a.change_cny) if a.delta_kwh else "")
 
     prev_line = ""
     if a.prev_ts is not None:
@@ -531,17 +561,17 @@ def render_html(a: Analysis, trend_days: int = 7) -> str:
       <td width="33.33%" style="vertical-align:top">
         <div class="lbl" style="font-size:13px;color:#6b7280;margin-bottom:6px">{t('daily_avg')}</div>
         <div class="mid" style="font-size:20px;font-weight:bold;color:#111827;white-space:nowrap">{avg} <span style="font-size:13px;font-weight:normal;color:#6b7280">kWh</span></div>
-        <div class="sub" style="font-size:11px;color:#9ca3af">{_avg_tag(a).strip('（）()')}</div>
+        {avg_subs}
       </td>
       <td width="33.33%" style="vertical-align:top">
         <div class="lbl" style="font-size:13px;color:#6b7280;margin-bottom:6px">{t('runs_for')}</div>
         <div class="mid" style="font-size:20px;font-weight:bold;color:#111827;white-space:nowrap">{days} <span style="font-size:13px;font-weight:normal;color:#6b7280">{t('unit_day')}</span></div>
-        <div class="sub" style="font-size:11px;color:#9ca3af">{runout}</div>
+        <div class="sub" style="font-size:11px;color:#9ca3af;line-height:1.5">{runout}</div>
       </td>
       <td width="33.33%" style="vertical-align:top">
         <div class="lbl" style="font-size:13px;color:#6b7280;margin-bottom:6px">{t('change')}</div>
         <div class="mid" style="font-size:20px;font-weight:bold;color:{change_color};white-space:nowrap">{change_num} <span style="font-size:13px;font-weight:normal;color:#6b7280">kWh</span></div>
-        <div class="sub" style="font-size:11px;color:#9ca3af">{change_note}</div>
+        {change_subs}
       </td>
     </tr></table>
 

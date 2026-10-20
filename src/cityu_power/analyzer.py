@@ -43,6 +43,23 @@ class Analysis:
             return round(self.latest.balance_kwh * self.price_per_kwh, 2)
         return None
 
+    def _cny(self, kwh: float | None) -> float | None:
+        if kwh is None or not self.price_per_kwh:
+            return None
+        value = kwh * self.price_per_kwh
+        # 变动量很小，两位小数会显示成 0.00，多留一位
+        return round(value, 2) if abs(value) >= 0.01 else round(value, 3)
+
+    @property
+    def avg_cny(self) -> float | None:
+        """日均用电折合的金额。"""
+        return self._cny(self.avg_daily)
+
+    @property
+    def change_cny(self) -> float | None:
+        """距上次查询的用电折合的金额。"""
+        return self._cny(self.delta_kwh)
+
 
 def _parse_usage(items: Any, *, day_labels: bool = False) -> list[tuple[str, float]]:
     """
