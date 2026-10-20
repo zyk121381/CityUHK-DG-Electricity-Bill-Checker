@@ -1,0 +1,17 @@
+[Unit]
+Description=CityUHK(DG) dorm electricity check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__USER__
+WorkingDirectory=__APP_DIR__
+Environment=PYTHONUNBUFFERED=1
+ExecStart="__APP_DIR__/.venv/bin/python" "__APP_DIR__/run.py" check
+TimeoutStartSec=300
+Nice=10
+
+# 抓取失败不重试，避免把偶发错误放大成一批请求；
+# 失败本身会通过推送渠道告诉你（见 cli.py 的 _report_failure）
+Restart=no

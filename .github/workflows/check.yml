@@ -1,0 +1,73 @@
+name: 宿舍电量检查
+
+on:
+  # 默认只手动触发。Actions → 宿舍电量检查 → Run workflow。
+  # 想每天自动跑，fork 到自己仓库后按 README 的说明把 schedule 加回来。
+  workflow_dispatch:
+
+concurrency:
+  group: power-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      # 把历史读数带过来，否则每次都是空库、算不出趋势
+      - name: 恢复数据库
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: readings-${{ github.run_id }}
+          restore-keys: |
+            readings-
+
+      - name: 写入配置
+        env:
+          CONFIG_YAML: ${{ secrets.CONFIG_YAML }}
+        run: |
+          if [ -z "$CONFIG_YAML" ]; then
+            echo "缺少 secrets.CONFIG_YAML" >&2
+            exit 1
+          fi
+          printf '%s\n' "$CONFIG_YAML" > config.yaml
+
+      - name: 抓取并推送
+        env:
+          EPAY_ACCOUNT: ${{ secrets.EPAY_ACCOUNT }}
+          EPAY_PASSWORD: ${{ secrets.EPAY_PASSWORD }}
+          NOTIFY_CHANNELS: ${{ secrets.NOTIFY_CHANNELS }}
+          SHOWDOC_URL: ${{ secrets.SHOWDOC_URL }}
+          WXPUSHER_SPT: ${{ secrets.WXPUSHER_SPT }}
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_SSL: ${{ secrets.SMTP_SSL }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_TO: ${{ secrets.SMTP_TO }}
+          SMTP_SUBJECT_PREFIX: ${{ secrets.SMTP_SUBJECT_PREFIX }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+        run: python run.py check
+
+      # 抓取失败时把日志也带回来
+      - name: 失败时上传日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: logs/
+          if-no-files-found: ignore

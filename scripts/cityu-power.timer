@@ -1,0 +1,14 @@
+[Unit]
+Description=Daily CityUHK(DG) electricity check
+
+[Timer]
+# 每天 08:00（服务器本地时区）。要改时间改这里。
+OnCalendar=*-*-* 08:00:00
+# 服务器 08:00 时关机/重启过，开机后补跑一次
+Persistent=true
+# 随机延迟 0~5 分钟，别卡着整点打学校接口
+RandomizedDelaySec=300
+Unit=cityu-power.service
+
+[Install]
+WantedBy=timers.target

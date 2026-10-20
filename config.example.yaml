@@ -1,0 +1,165 @@
+# ============================================================
+# 香港城市大学（东莞）宿舍电量查询器 —— 配置模板
+# 复制成 config.yaml 后填写。
+# 大写名字的 ${XXX} 从环境变量 / .env 读取；
+# ${steps.0.json.data.meterSn} 是 provider 层的运行时引用，不会被替换。
+# ============================================================
+
+provider:
+  # http = 打真实接口；mock = 假数据（不联网，用来调试）
+  type: http
+
+  http:
+    timeout: 20
+    verify_ssl: true
+    headers:
+      accept: "application/json, text/plain, */*"
+      origin: "https://onebill.cityu-dg.edu.cn"
+      referer: "https://onebill.cityu-dg.edu.cn/home"
+      user-agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0"
+
+    auth:
+      # password = 学号密码自动登录（推荐，全自动）
+      # sso      = 用浏览器会话 cookie 换 token（password 不通时兜底）
+      # token    = 固定 token，手动换
+      # login    = onebill 自己的账号表，走不通，留档
+      mode: password
+      token: "${EPAY_TOKEN}"
+      token_file: "data/token.json"
+
+      password:
+        account: "${EPAY_ACCOUNT}"
+        secret: "${EPAY_PASSWORD}"
+        idp:
+          origin: "https://idp.cityu-dg.edu.cn"
+          login_data: "https://idp.cityu-dg.edu.cn/api/public/bff/v1.2/frontend/login_data"
+          init_code: "https://idp.cityu-dg.edu.cn/api/public/bff/v1.2/one_time_login/init_code"
+          token: "https://idp.cityu-dg.edu.cn/api/public/bff/v1.2/rest_token"
+        sso:
+          info_url: "https://onebill.cityu-dg.edu.cn/api/getSsoMiniInfo"
+          info_field: "data.ssoUrl"
+          token_url: "https://onebill.cityu-dg.edu.cn/api/loginSSOMini"
+          token_path: "data.token"
+
+      sso:
+        info_url: "https://onebill.cityu-dg.edu.cn/api/getSsoMiniInfo"
+        info_field: "data.ssoUrl"
+        cookie: "${IDP_COOKIE}"
+        token_url: "https://onebill.cityu-dg.edu.cn/api/loginSSOMini"
+        token_path: "data.token"
+
+      login:
+        method: POST
+        url: "https://onebill.cityu-dg.edu.cn/api/loginAcc"
+        json:
+          AccountName: "${EPAY_ACCOUNT}"
+          Password: "${EPAY_PASSWORD}"
+        token_path: "data.token"
+
+    steps:
+      # 1) 查钱包：拿 meterSn（表号）和房间号
+      - name: wallet
+        method: GET
+        url: "https://onebill.cityu-dg.edu.cn/api/walletManagement/getWallet"
+
+      # 2) 触发一次现场抄表，返回最新剩余电量
+      - name: remain
+        method: POST
+        url: "https://onebill.cityu-dg.edu.cn/api/walletManagement/updateRemainCapacity"
+        json:
+          meterSn: "${steps.0.json.data.meterSn}"
+          from: "mobile"
+
+      # 3) 服务端记录的每日用电量（本地还没攒够读数时用来算日均）
+      #    optional: true —— 这类附加信息挂了不影响电量抓取
+      - name: usage
+        method: POST
+        url: "https://onebill.cityu-dg.edu.cn/api/analysis/getEnergyUsageByDay"
+        json: {}
+        optional: true
+
+      # 4) 历史账单（getWallet 里的 billOne）
+      - name: bills
+        method: POST
+        url: "https://onebill.cityu-dg.edu.cn/api/bill/myHistory"
+        json:
+          billType: ""
+          month: ""
+        optional: true
+
+      # 5) 未缴账单，非空就告警
+      - name: unpaid
+        method: POST
+        url: "https://onebill.cityu-dg.edu.cn/api/bill/myUnpaid"
+        json: {}
+        optional: true
+
+      # 6) 每月用电量（近 12 个月）
+      - name: monthly
+        method: POST
+        url: "https://onebill.cityu-dg.edu.cn/api/analysis/getEnergyUsageByMonth"
+        json: {}
+        optional: true
+
+    extract:
+      # 接口自己把 Capacity 拼成了 Rapacity，不改
+      balance_kwh:
+        step: 1
+        path: "data.remainRapacity"
+      updated_at:
+        step: 1
+        path: "data.updatedAt"
+      room:
+        step: 0
+        path: "data.room"
+      extra:
+        meter_sn:
+          step: 0
+          path: "data.meterSn"
+        bill_name:
+          step: 0
+          path: "data.billOne.billName"
+        bill_money:
+          step: 0
+          path: "data.billOne.money"
+        usage_history:
+          step: 2
+          path: "data.0.electricityUsage"
+        bill_history:
+          step: 3
+          path: "data.items"
+        unpaid_items:
+          step: 4
+          path: "data.items"
+        usage_monthly:
+          step: 5
+          path: "data.0.electricityUsage"
+
+
+notify:
+  # 渠道和参数都在 .env 里配（NOTIFY_CHANNELS + 各渠道变量），这里只管策略
+
+  push_report: true           # 常规报告：每次运行都推
+  alert_once_per_day: true    # 告警：同一天同样的告警只推一次（--force 可绕过）
+  alerts:
+    enabled: true             # 是否开启告警
+    low_balance_kwh: 20       # 剩余电量低于这个数就告警
+    low_days_left: 5          # 预计可用天数低于这个数就告警
+    spike_ratio: 2.0          # 单日用电超过近期均值的几倍算异常
+    silent_days: 2            # 连续多少天没抓到新数据就告警
+
+
+# 电价：0 = 从账单自动反推（账单金额 ÷ 对应月用电量）
+#      也可以自己设定一个固定的值
+electricity:
+  price_per_kwh: 0
+
+
+storage:
+  db_path: "data/readings.db"
+  analysis_window_days: 7
+
+app:
+  timezone: "Asia/Shanghai"
+  locale: en              # 推送语言：en（默认）/ zh
+  log_path: "logs/checker.log"
