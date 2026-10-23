@@ -170,8 +170,8 @@ def test_whole_pipeline() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         storage = Storage(Path(tmp) / "t.db")
 
-        # 造 6 天历史（每天 08:00 一条）
-        now = datetime.now().astimezone().replace(hour=8, minute=0, second=0, microsecond=0)
+        # 造 6 天历史（每天 00:00 一条，正好是日界）
+        now = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
         for i, kwh in enumerate([100.0, 93.0, 88.0, 80.0, 75.0, 70.0]):
             storage.add(
                 Reading(
@@ -189,7 +189,7 @@ def test_whole_pipeline() -> None:
 
         result = analyze(
             latest=reading,
-            readings=storage.daily_latest(14),
+            readings=storage.since(14),
             low_balance_kwh=20,
             low_days_left=5,
         )
@@ -256,39 +256,52 @@ def test_helpers() -> None:
     print("  [ok] 路径取值与数字解析")
 
 
-def test_daily_average_uses_real_gap() -> None:
-    """日均要按真实时间折算，不能按日历天数。
+def test_daily_usage_uses_midnight_anchor() -> None:
+    """每日用电按 00:00 日界相减，零点那次运行不能把 6 小时外推成一天。
 
-    回归：定时任务每 6 小时跑一次时，相邻两天「最后一条读数」可能只隔几小时，
-    按日历算会把日均压到 1/5。
+    回归：2026-10-24 00:00 的推送写了「10-24 用电 6.96 kWh」。
+    真实情况是 23 日 18:00 → 24 日 00:00 用掉 1.74 度，
+    旧代码按 1.74 / 0.25 天算出 6.96，还把它归到了 24 日。
     """
-    from datetime import datetime, timedelta, timezone
+    from datetime import timezone
 
     from cityu_power.analyzer import _series
-    from cityu_power.models import Reading
 
     tz = timezone(timedelta(hours=8))
-    t0 = datetime(2026, 10, 20, 19, 23, tzinfo=tz)
 
-    a = Reading(ts=t0, balance_kwh=197.72)
-    b = Reading(ts=t0 + timedelta(hours=4, minutes=42), balance_kwh=196.75)
-    got = _series([a, b])
-    assert got and abs(got[0].used_kwh - 4.95) < 0.05, got
+    def r(day: int, hour: int, kwh: float) -> Reading:
+        return Reading(
+            ts=datetime(2026, 10, day, hour, 0, 3, tzinfo=tz), balance_kwh=kwh
+        )
 
-    c = Reading(ts=t0 + timedelta(days=1), balance_kwh=192.8)
-    got = _series([a, c])
-    assert got and abs(got[0].used_kwh - 4.92) < 0.01, got
+    # 每 6 小时一条，00:00 那条就是日界
+    rows = [
+        r(21, 0, 196.60), r(21, 6, 195.97), r(21, 12, 195.48), r(21, 18, 193.87),
+        r(22, 0, 192.89), r(22, 6, 192.12), r(22, 12, 191.92), r(22, 18, 190.43),
+        r(23, 0, 189.18), r(23, 6, 188.53), r(23, 12, 188.09), r(23, 18, 187.50),
+        r(24, 0, 185.76),
+    ]
+    got = _series(rows)
+    assert [d.day.day for d in got] == [21, 22, 23], got
+    assert [round(d.used_kwh, 2) for d in got] == [3.71, 3.71, 3.42], got
+    assert all(abs(d.span_days - 1.0) < 0.01 for d in got), got
 
-    # 漏抓三天，按实际天数摊平
-    d = Reading(ts=t0 + timedelta(days=3), balance_kwh=180.0)
-    got = _series([a, d])
-    assert got and abs(got[0].used_kwh - 5.91) < 0.05, got
+    # 起点不是日界（程序 19:23 才上线），这段跨度不代表一天，不能算
+    late = [r(20, 19, 197.72), r(21, 19, 196.75)]
+    assert _series(late) == [], _series(late)
 
-    # 间隔不到一小时，差值是噪声，跳过
-    e = Reading(ts=t0 + timedelta(minutes=10), balance_kwh=197.70)
-    assert _series([a, e]) == []
+    # 漏跑 00:00，起点漂到 06:00，同样不算
+    missed = [r(22, 6, 192.12), r(23, 6, 188.53)]
+    assert _series(missed) == [], _series(missed)
 
-    print("  [ok] 日均按真实时间折算")
+    # 间隔不到一小时，差值是噪声
+    close = [
+        r(21, 0, 197.72),
+        Reading(ts=datetime(2026, 10, 21, 0, 10, 3, tzinfo=tz), balance_kwh=197.70),
+    ]
+    assert _series(close) == [], _series(close)
+
+    print("  [ok] 每日用电按 00:00 日界相减，不做小时级外推")
 
 
 def test_short_window_falls_back_to_history() -> None:
@@ -302,7 +315,7 @@ def test_short_window_falls_back_to_history() -> None:
     from cityu_power.models import Reading
 
     tz = timezone(timedelta(hours=8))
-    t0 = datetime(2026, 10, 20, 19, 23, tzinfo=tz)
+    t0 = datetime(2026, 10, 20, 0, 0, 5, tzinfo=tz)
 
     short = [
         Reading(ts=t0, balance_kwh=197.72),
@@ -346,7 +359,7 @@ def test_short_window_falls_back_to_history() -> None:
         now=days[-1].ts + timedelta(hours=6),
     )
     assert got.avg_source == "local", got.avg_source
-    assert got.avg_window == ("10-21", "10-23"), got.avg_window
+    assert got.avg_window == ("10-20", "10-22"), got.avg_window
 
     # 门槛提高到 3 天：两天的数据还不够，仍走服务端
     two_days = [Reading(ts=t0 + timedelta(days=d), balance_kwh=197.72 - 4.4 * d)
@@ -368,7 +381,7 @@ def main() -> int:
     try:
         print("本地假服务器:", base)
         test_helpers()
-        test_daily_average_uses_real_gap()
+        test_daily_usage_uses_midnight_anchor()
         test_short_window_falls_back_to_history()
         test_bill_list()
         test_http_provider(base)

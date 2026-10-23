@@ -108,7 +108,7 @@ def _analyze(cfg: Config, latest: Reading, storage: Storage) -> Analysis:
 
     result = analyze(
         latest=latest,
-        readings=storage.daily_latest(int(cfg.get("storage.analysis_window_days", 7)) + 1),
+        readings=storage.since(int(cfg.get("storage.analysis_window_days", 7)) + 1),
         window_days=int(cfg.get("storage.analysis_window_days", 7)),
         min_local_days=float(cfg.get("storage.min_local_days", 3)),
         alerts_enabled=bool(alerts.get("enabled", True)),

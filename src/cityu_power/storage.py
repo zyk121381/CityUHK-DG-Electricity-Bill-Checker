@@ -66,21 +66,13 @@ class Storage:
         ).fetchall()
         return [Reading.from_row(r) for r in rows]
 
-    def daily_latest(self, days: int = 14) -> list[Reading]:
-        """每天取最后一条读数，按时间升序返回。"""
-        since = (date.today() - timedelta(days=days)).isoformat()
+    def since(self, days: int = 14) -> list[Reading]:
+        """
+        窗口内的原始读数，按时间升序返回。
+        """
+        start = (date.today() - timedelta(days=days)).isoformat()
         rows = self.conn.execute(
-            """
-            SELECT ts, day, room, balance_kwh, balance_cny, source, meta
-            FROM readings r
-            WHERE day >= ?
-              AND id = (
-                  SELECT id FROM readings
-                  WHERE day = r.day ORDER BY ts DESC, id DESC LIMIT 1
-              )
-            ORDER BY day ASC
-            """,
-            (since,),
+            _SELECT + " WHERE day >= ? ORDER BY ts ASC, id ASC", (start,)
         ).fetchall()
         return [Reading.from_row(r) for r in rows]
 

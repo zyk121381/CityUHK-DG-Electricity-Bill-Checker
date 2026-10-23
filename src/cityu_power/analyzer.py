@@ -104,17 +104,41 @@ def avg_from_history(items: Any, days: int = 14) -> float | None:
     return round(sum(recent) / len(recent), 2)
 
 
+# 日界容差：起点读数必须落在当天 00:00 之后这么久以内。
+# 程序上线当天、或者漏跑 00:00 的日子，起点会漂到白天，
+# 那一段的跨度不是一天，按天外推只会造出假数据。
+_ANCHOR_GRACE_SECONDS = 2 * 3600
+
+
+def _anchors(readings: list[Reading]) -> dict[date, Reading]:
+    """每天取最早的一条读数，也就是 00:00 那个日界。"""
+    out: dict[date, Reading] = {}
+    for r in sorted(readings, key=lambda x: x.ts):
+        if r.balance_kwh is None:
+            continue
+        out.setdefault(r.ts.date(), r)
+    return out
+
+
 def _series(readings: list[Reading]) -> list[DailyUsage]:
     """
-    把相邻读数换算成日均用电。
+    把相邻两天的日界读数相减，得到每天的实际用电。
 
-    用真实时间间隔，不是日历天数。`daily_latest` 取的是每天最后一条读数，
-    定时任务不一定对齐整点——手动补跑一次，两条读数可能只隔几个小时，
-    按日历算会把日均压得很低。
+    日界 = 每天 00:00 刚过的那条读数，相邻日界相减就是前一天真实的用电量。
+
+    这里不做小时级外推 —— 外推正是「10-24 用了 6.96 度」的来源：
+    23 日 18:00 → 24 日 00:00 只有 6 小时、用掉 1.74 度，
+    除以 0.25 天就变成 6.96 度/天，再被当成一整天的用电量展示。
     """
-    usable = [r for r in readings if r.balance_kwh is not None]
+    anchors = _anchors(readings)
+    days = sorted(anchors)
     out: list[DailyUsage] = []
-    for prev, cur in zip(usable, usable[1:]):
+    for prev_day, cur_day in zip(days, days[1:]):
+        prev, cur = anchors[prev_day], anchors[cur_day]
+        # 起点不是日界（上线当天 / 漏跑 00:00），这段跨度不代表一天，跳过。
+        offset = prev.ts.hour * 3600 + prev.ts.minute * 60 + prev.ts.second
+        if offset > _ANCHOR_GRACE_SECONDS:
+            continue
         span = (cur.ts - prev.ts).total_seconds() / 86400
         if span < 1 / 24:  # 不到一小时，差值多半是噪声
             continue
@@ -123,7 +147,8 @@ def _series(readings: list[Reading]) -> list[DailyUsage]:
             continue
         out.append(
             DailyUsage(
-                day=cur.ts.date(),
+                # 归到区间的起点，也就是这段电真正被用掉的那一天
+                day=prev_day,
                 used_kwh=round(total / span, 2),
                 balance_kwh=cur.balance_kwh,
                 span_days=round(span, 4),
