@@ -1,0 +1,26 @@
+# 版本控制与开发环境
+.git
+.github
+.workbuddy
+.idea
+.vscode
+__pycache__
+*.py[cod]
+.venv
+venv
+
+# 本机运行产物
+data
+logs
+state
+testdata
+
+# 凭据
+.env
+config.yaml
+
+# 其他
+tests
+scripts
+*.md
+.gitignore

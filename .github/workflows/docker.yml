@@ -1,0 +1,86 @@
+name: Docker
+
+on:
+  push:
+    branches: [main, dev]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      export_tar:
+        description: "同时导出 tar.gz（离线导入群晖/威联通用）"
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 镜像名转小写
+        run: echo "IMAGE=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 生成 tags 和 labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-,format=short
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          # PR 只构建验证，不推，避免把未合并的代码推到 latest
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 导出镜像
+        if: github.event_name == 'workflow_dispatch' && inputs.export_tar
+        run: |
+          set -e
+          docker pull --platform linux/amd64 "${IMAGE}:latest"
+          docker tag "${IMAGE}:latest" cityu-power:amd64
+          docker save cityu-power:amd64 | gzip -9 > cityu-power-amd64.tar.gz
+          docker pull --platform linux/arm64 "${IMAGE}:latest"
+          docker tag "${IMAGE}:latest" cityu-power:arm64
+          docker save cityu-power:arm64 | gzip -9 > cityu-power-arm64.tar.gz
+          ls -lh ./*.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && inputs.export_tar
+        with:
+          name: cityu-power-image
+          path: "*.tar.gz"
+          retention-days: 3
