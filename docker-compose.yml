@@ -1,0 +1,56 @@
+services:
+  checker:
+    image: ghcr.io/zyk121381/cityuhk-dg-electricity-bill-checker:latest
+    # 想用本地源码构建就把下面这行取消注释，然后 docker compose up -d --build
+    # build: .
+    container_name: cityu-power
+    restart: unless-stopped
+    # 默认以 root 跑。
+    # 想让它们归自己的账号，取消下面一行（NAS 上先用 id -u 查自己的 UID）。
+    # user: "1000:1000"
+
+    environment:
+      TZ: Asia/Shanghai
+      # 每天几点查，可以写多个：08:00,20:00
+      RUN_AT: "08:00"
+      # 容器启动时先跑一次。频繁重启会重复推送，默认关
+      RUN_ON_START: "0"
+
+      # ---- 一表通账号（auth.mode = password）----
+      EPAY_ACCOUNT: "${EPAY_ACCOUNT:-}"
+      EPAY_PASSWORD: "${EPAY_PASSWORD:-}"
+      # 兜底：手动 token
+      EPAY_TOKEN: "${EPAY_TOKEN:-}"
+
+      # ---- 启用哪些推送渠道，逗号分隔 ----
+      # 可选：showdoc / wxpusher / pushplus / serverchan / feishu / wecom_bot / email / webhook
+      NOTIFY_CHANNELS: "${NOTIFY_CHANNELS:-}"
+      SHOWDOC_URL: "${SHOWDOC_URL:-}"
+      WXPUSHER_SPT: "${WXPUSHER_SPT:-}"
+      WXPUSHER_CONTENT_TYPE: "${WXPUSHER_CONTENT_TYPE:-2}"
+      PUSHPLUS_TOKEN: "${PUSHPLUS_TOKEN:-}"
+      PUSHPLUS_TOPIC: "${PUSHPLUS_TOPIC:-}"
+      SERVERCHAN_SENDKEY: "${SERVERCHAN_SENDKEY:-}"
+      FEISHU_WEBHOOK: "${FEISHU_WEBHOOK:-}"
+      WECOM_WEBHOOK: "${WECOM_WEBHOOK:-}"
+      WEBHOOK_URL: "${WEBHOOK_URL:-}"
+      # 邮件
+      SMTP_HOST: "${SMTP_HOST:-}"
+      SMTP_PORT: "${SMTP_PORT:-465}"
+      SMTP_USER: "${SMTP_USER:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+      SMTP_TO: "${SMTP_TO:-}"
+      SMTP_SSL: "${SMTP_SSL:-true}"
+
+    volumes:
+      - ./data:/app/data     # SQLite 和 token 缓存
+      - ./logs:/app/logs
+      # 要改告警阈值 / 电价 / 推送语言时才需要，且宿主机上得先有这个文件：
+      # cp config.example.yaml config.yaml
+      # - ./config.yaml:/app/config.yaml:ro
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"

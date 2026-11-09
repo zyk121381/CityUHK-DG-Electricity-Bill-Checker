@@ -233,6 +233,40 @@ Nothing runs on a schedule, to have it check every day, set it up like this:
 1. GitHub turns scheduled workflows off after 60 days without activity in the repository;
 2. The runners sit outside the Chinese mainland, so `onebill.cityu-dg.edu.cn` may not answer them. A systemd timer on your own server is steadier.
 
+### Docker
+
+Runs on an off-the-shelf NAS (Synology, QNAP, ZSpace) and on any machine with Docker. No Python on the host.
+
+The `docker-compose.yml` in the repository root:
+
+```bash
+cp .env.example .env          # student ID, password, push channels — compose reads it automatically
+docker compose up -d
+docker compose logs -f        # watch the scheduler
+```
+
+Images are built for **amd64 and arm64**, so ARM boxes such as the DS223 and TS-433 work too.
+
+- **The container carries its own scheduler** — no cron job to set up in the NAS panel. `RUN_AT` sets the time, `08:00,20:00` runs it twice a day, and `RUN_ON_START=1` fires once on boot;
+- **Leave `TZ` alone.** Alert de-duplication keys off `date.today()`. A container running in UTC makes the 08:00 run treat the date as the previous day, and the same alert goes out twice;
+- **State lives in two mounts**: `./data` (SQLite plus the token cache) and `./logs`. Swapping images loses nothing;
+- To change alert thresholds, the unit price or the report language, mount your own `config.yaml` at `/app/config.yaml`. Create the file on the host first (`cp config.example.yaml config.yaml`) — pointing Docker at a path that does not exist makes it create a **directory** there, and Python then fails with `IsADirectoryError`;
+- If your password contains `$`, write it as `$$` in `.env`, otherwise compose expands it as a variable.
+
+No credentials are baked into the image: `config.yaml`, `.env`, `data/` and `logs/` are all in `.dockerignore`.
+
+Run once by hand:
+
+```bash
+docker compose run --rm checker check --force
+```
+
+Arguments after `docker compose run` go straight through to `run.py`, so `doctor`, `notify-test` and `history -n 20` work as usual.
+
+**If ghcr.io will not pull**: Actions → Docker → Run workflow, tick `export_tar`, then download `cityu-power-amd64.tar.gz` (or the arm64 one) from the run page and use *Import image* in the NAS Docker UI. No proxy needed.
+
+The image is built by `.github/workflows/docker.yml`: pushes to `main` or `v*` tags publish `latest` plus the version tags, while pull requests only build to verify.
+
 ## 🖥️ Commands
 
 | Command | Purpose |
@@ -266,6 +300,13 @@ CityUHK(DG) Electricity Bill Checker/
 ├── config.example.yaml             # Config template
 ├── .env.example                    # Credentials and channel template
 ├── requirements.txt
+├── Dockerfile                      # image definition, amd64 + arm64
+├── docker-compose.yml              # one-command deploy for a NAS
+├── docker/entrypoint.sh            # CLI passthrough + built-in scheduler
+├── .dockerignore
+├── .github/workflows/
+│   ├── check.yml                   # borrow a GitHub runner to run a check
+│   └── docker.yml                  # build and push the image to ghcr.io
 ├── src/cityu_power/
 │   ├── cli.py                      # Subcommands, notify policy, failure reports
 │   ├── config.py                   # YAML loading, ${ENV} expansion, path resolution

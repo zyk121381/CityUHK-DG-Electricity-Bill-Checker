@@ -233,6 +233,40 @@ bash /opt/cityu-power/scripts/run-check.sh
 1. 仓库 60 天没有任何活动，GitHub 会自动停用定时任务；
 2. runner 在大陆之外，`onebill.cityu-dg.edu.cn` 未必能访问得到。自己服务器上装 systemd timer 更稳。
 
+### Docker
+
+成品 NAS（群晖、威联通、极空间）和任何装了 Docker 的机器都能跑，宿主机不需要 Python。
+
+仓库根目录的 `docker-compose.yml`：
+
+```bash
+cp .env.example .env          # 填学号密码和推送渠道，compose 会自动读它
+docker compose up -d
+docker compose logs -f        # 看调度日志
+```
+
+镜像同时出 **amd64 和 arm64**，DS223、TS-433 这类 ARM 机型也能拉。
+
+- **容器自己带定时**，不用在 NAS 界面里配计划任务。`RUN_AT` 改时间，`08:00,20:00` 就是一天两次；`RUN_ON_START=1` 让容器启动时先跑一次；
+- **`TZ` 别改**。告警的每日去重是按 `date.today()` 算的，容器跑在 UTC 会让早上八点那次把日期认成前一天，同一条告警一天推两遍；
+- **数据落在两个挂载目录**：`./data`（SQLite + token 缓存）、`./logs`。换镜像不丢历史；
+- 要改告警阈值、电价、推送语言，把 `config.yaml` 挂到 `/app/config.yaml`。挂之前宿主机上得先有这个文件（`cp config.example.yaml config.yaml`），直接挂一个不存在的路径 Docker 会拿目录顶上，Python 读配置时报 `IsADirectoryError`；
+- 密码里有 `$`，在 `.env` 里写成 `$$`，否则 compose 会当变量展开。
+
+镜像里没有任何凭据，`config.yaml`、`.env`、`data/`、`logs/` 都在 `.dockerignore` 里。
+
+手动跑一次：
+
+```bash
+docker compose run --rm checker check --force
+```
+
+`docker compose run` 后面的参数会原样透传给 `run.py`，所以 `doctor`、`notify-test`、`history -n 20` 这些照样能用。
+
+**拉不动 ghcr.io 的情况**：Actions → Docker → Run workflow，勾上 `export_tar`，跑完在页面底部下载 `cityu-power-amd64.tar.gz`（或 arm64），在 NAS 的 Docker 界面「导入镜像」，全程不用配代理。
+
+镜像由 `.github/workflows/docker.yml` 构建：push 到 `main` 或打 `v*` tag 会推 `latest` 和版本号，PR 只构建验证不推。
+
 ## 🖥️ 命令
 
 | 命令 | 作用 |
@@ -266,6 +300,13 @@ CityUHK(DG) Electricity Bill Checker/
 ├── config.example.yaml             # 配置模板
 ├── .env.example                    # 凭据与渠道模板
 ├── requirements.txt
+├── Dockerfile                      # 镜像定义，amd64 + arm64
+├── docker-compose.yml              # NAS 一键部署
+├── docker/entrypoint.sh            # CLI 直通 + 内置调度循环
+├── .dockerignore
+├── .github/workflows/
+│   ├── check.yml                   # 借 GitHub runner 跑检查
+│   └── docker.yml                  # 构建并推送镜像到 ghcr.io
 ├── src/cityu_power/
 │   ├── cli.py                      # 子命令、推送策略、失败上报
 │   ├── config.py                   # YAML 加载、${ENV} 展开、路径解析
